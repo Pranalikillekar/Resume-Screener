@@ -230,7 +230,15 @@ function ScoreRing({ score, size = 'md' }: { score: number; size?: 'sm' | 'md' |
   );
 }
 
-function Sidebar({ candidateCount, onSample }: { candidateCount: number; onSample: () => void }) {
+function Sidebar({
+  candidateCount,
+  onSample,
+  onNavigate,
+}: {
+  candidateCount: number;
+  onSample: () => void;
+  onNavigate: (sectionId: string) => void;
+}) {
   return (
     <aside className="flex w-full shrink-0 flex-col bg-[#17343a] text-[#eff4e9] md:min-h-screen md:w-[232px]">
       <div className="flex items-center justify-between px-5 py-5 md:block">
@@ -251,17 +259,17 @@ function Sidebar({ candidateCount, onSample }: { candidateCount: number; onSampl
       <div className="hidden flex-1 px-3 md:block">
         <div className="mb-3 px-3 pt-7 font-mono text-[10px] uppercase tracking-[0.18em] text-[#789692]">Workspace</div>
         <nav className="space-y-1">
-          <button className="flex w-full items-center gap-3 bg-[#294b4e] px-3 py-2.5 text-left text-sm font-semibold text-[#eff4e9]" data-testid="button-nav-screening">
+          <button onClick={() => onNavigate('screening-desk')} className="flex w-full items-center gap-3 bg-[#294b4e] px-3 py-2.5 text-left text-sm font-semibold text-[#eff4e9]" data-testid="button-nav-screening">
             <LayoutDashboard size={16} className="text-[#dce76b]" />
             Screening desk
             <span className="ml-auto font-mono text-[10px] text-[#aec4bf]">01</span>
           </button>
-          <button className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm text-[#a9bfba] transition hover:bg-[#234347] hover:text-[#eff4e9]" data-testid="button-nav-candidates">
+          <button onClick={() => onNavigate('candidate-pool')} className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm text-[#a9bfba] transition hover:bg-[#234347] hover:text-[#eff4e9]" data-testid="button-nav-candidates">
             <UsersRound size={16} />
             Candidate pool
             <span className="ml-auto font-mono text-[10px] text-[#789692]">{candidateCount.toString().padStart(2, '0')}</span>
           </button>
-          <button className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm text-[#a9bfba] transition hover:bg-[#234347] hover:text-[#eff4e9]" data-testid="button-nav-notes">
+          <button onClick={() => onNavigate('review-notes')} className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm text-[#a9bfba] transition hover:bg-[#234347] hover:text-[#eff4e9]" data-testid="button-nav-notes">
             <Clipboard size={16} />
             Review notes
           </button>
@@ -305,7 +313,7 @@ function ResumeQueue({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   return (
-    <section className="rounded-[2px] border border-[#d8e1d7] bg-[#fbfcf9] p-5 shadow-[0_2px_10px_rgba(23,52,58,0.025)] sm:p-6" data-testid="section-resume-queue">
+    <section id="candidate-pool" className="scroll-mt-6 rounded-[2px] border border-[#d8e1d7] bg-[#fbfcf9] p-5 shadow-[0_2px_10px_rgba(23,52,58,0.025)] sm:p-6" data-testid="section-resume-queue">
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
           <div className="mb-1 flex items-center gap-2">
@@ -430,7 +438,7 @@ function ResultsPanel({
 }) {
   const average = candidates.length ? Math.round(candidates.reduce((sum, candidate) => sum + candidate.score, 0) / candidates.length) : 0;
   return (
-    <section className="flex min-h-[570px] flex-col overflow-hidden rounded-[2px] border border-[#cad9cd] bg-[#fbfcf9] shadow-[0_4px_18px_rgba(23,52,58,0.05)]" data-testid="section-results">
+    <section id="review-notes" className="scroll-mt-6 flex min-h-[570px] flex-col overflow-hidden rounded-[2px] border border-[#cad9cd] bg-[#fbfcf9] shadow-[0_4px_18px_rgba(23,52,58,0.05)]" data-testid="section-results">
       <div className="border-b border-[#dfe8dd] bg-[#eef4e8] px-5 py-5 sm:px-6">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -537,6 +545,9 @@ function Home() {
   const [notice, setNotice] = useState('');
 
   const sortedResults = useMemo(() => [...results].sort((a, b) => b.score - a.score), [results]);
+  const navigateToSection = (sectionId: string) => {
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const addFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -605,8 +616,8 @@ function Home() {
   return (
     <div className="min-h-[100dvh] bg-[#f0f5ed] text-[#17343a]">
       <div className="flex min-h-[100dvh] flex-col md:flex-row">
-        <Sidebar candidateCount={queue.length} onSample={loadSample} />
-        <main className="min-w-0 flex-1">
+        <Sidebar candidateCount={queue.length} onSample={loadSample} onNavigate={navigateToSection} />
+        <main id="screening-desk" className="min-w-0 flex-1">
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d6e1d5] bg-[#f7faf5] px-5 py-4 sm:px-8">
             <div className="flex items-center gap-2 text-xs text-[#75908a]">
               <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#46675d]">Workspace / first pass</span>
