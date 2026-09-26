@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Resume Screener"
+description = "A polished resume screening workspace that compares a job description with a batch of resumes using explainable, local fit scoring and fairness-aware redaction."
+version = "1.0.0"
+id = "artifacts/resume-screener"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19859
+
+[services.development]
+run = "pnpm --filter @workspace/resume-screener run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/resume-screener", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/resume-screener/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19859"
+BASE_PATH = "/"
