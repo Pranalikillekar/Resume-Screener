@@ -31,8 +31,10 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
+import * as pdfjsLib from 'pdfjs-dist';
 
 const queryClient = new QueryClient();
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
 type Candidate = {
   id: string;
@@ -204,6 +206,36 @@ function createCandidateFromFile(file: File, index: number, sourceText = ''): Ca
   };
 }
 
+async function readResumeFile(file: File) {
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  if (extension === 'txt' || extension === 'md') {
+    return file.text();
+  }
+
+  if (extension === 'pdf') {
+    const document = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const pages: string[] = [];
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      pages.push(content.items.map((item) => ('str' in item ? item.str : '')).join(' '));
+    }
+    return pages.join('\n');
+  }
+
+  if (extension === 'docx') {
+    // The browser bundle keeps DOCX parsing local and avoids a server upload.
+    // @ts-expect-error mammoth's browser bundle does not ship a separate declaration file.
+    const mammothModule = await import('mammoth/mammoth.browser.js');
+    const mammoth = (mammothModule.default ?? mammothModule) as {
+      extractRawText: (input: { arrayBuffer: ArrayBuffer }) => Promise<{ value: string }>;
+    };
+    return (await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value;
+  }
+
+  throw new Error('This file type is not supported.');
+}
+
 function ScoreRing({ score, size = 'md' }: { score: number; size?: 'sm' | 'md' | 'lg' }) {
   const dimensions = size === 'lg' ? 'h-[84px] w-[84px]' : size === 'sm' ? 'h-12 w-12' : 'h-16 w-16';
   const text = size === 'lg' ? 'text-2xl' : size === 'sm' ? 'text-sm' : 'text-lg';
@@ -306,10 +338,12 @@ function ResumeQueue({
   candidates,
   onAdd,
   onRemove,
+  isReading,
 }: {
   candidates: Candidate[];
   onAdd: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemove: (id: string) => void;
+  isReading: boolean;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   return (
@@ -320,29 +354,39 @@ function ResumeQueue({
             <span className="font-mono text-[10px] font-bold uppercase tracking-[0.17em] text-[#68817c]">02 / source material</span>
             <span className="rounded-full bg-[#edf3db] px-2 py-0.5 font-mono text-[10px] text-[#536a54]">local only</span>
           </div>
-          <h2 className="text-xl font-semibold tracking-[-0.03em] text-[#17343a]">Add resumes</h2>
-          <p className="mt-1 text-sm text-[#68817c]">Plain text or Markdown. Add as many as you need.</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-xl font-semibold tracking-[-0.03em] text-[#17343a]">Add resumes</h2>
+            <span className="rounded-full border border-[#c9d9c5] bg-[#f4f8ed] px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-[#55745f]" data-testid="status-resume-count">
+              {candidates.length} {candidates.length === 1 ? 'resume' : 'resumes'} loaded
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-[#68817c]">PDF, DOCX, plain text, or Markdown. Files are read in this browser only.</p>
         </div>
         <div className="hidden rounded-full border border-[#d8e1d7] p-2 text-[#68817c] sm:block">
           <FolderOpen size={17} />
         </div>
       </div>
 
-      <input ref={fileInputRef} onChange={onAdd} className="hidden" type="file" accept=".txt,.md,text/plain,text/markdown" multiple data-testid="input-resume-files" />
+      <input ref={fileInputRef} onChange={onAdd} className="hidden" type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" multiple data-testid="input-resume-files" />
       <button
         onClick={() => fileInputRef.current?.click()}
-        className="group flex min-h-[104px] w-full flex-col items-center justify-center border border-dashed border-[#b8c9b7] bg-[#f4f8ed] px-4 text-center transition hover:border-[#708c78] hover:bg-[#edf3db]"
+        disabled={isReading}
+        className="group flex min-h-[104px] w-full flex-col items-center justify-center border border-dashed border-[#b8c9b7] bg-[#f4f8ed] px-4 text-center transition hover:border-[#708c78] hover:bg-[#edf3db] disabled:cursor-wait disabled:opacity-70"
         data-testid="button-add-resumes"
       >
         <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-full bg-[#17343a] text-[#dce76b] transition group-hover:scale-105">
-          <Plus size={17} />
+          {isReading ? <LoaderCircle size={17} className="animate-spin" /> : <Plus size={17} />}
         </span>
-        <span className="text-sm font-semibold text-[#355459]">Choose resume files</span>
-        <span className="mt-1 text-xs text-[#79918c]">or drop them here</span>
+        <span className="text-sm font-semibold text-[#355459]">{isReading ? 'Reading resumes locally…' : 'Choose resume files'}</span>
+        <span className="mt-1 text-xs text-[#79918c]">{isReading ? 'Your files are not being uploaded.' : 'PDF, DOCX, TXT, or MD · nothing leaves this browser'}</span>
       </button>
 
       {candidates.length > 0 ? (
         <div className="mt-4 divide-y divide-[#e2e9df]">
+          <div className="mb-2 flex items-center gap-2 bg-[#eef5e7] px-3 py-2 text-xs font-medium text-[#52705b]" data-testid="status-resumes-ready">
+            <CheckCircle2 size={14} />
+            {candidates.length} {candidates.length === 1 ? 'resume is' : 'resumes are'} loaded and ready for local screening.
+          </div>
           {candidates.map((candidate) => (
             <div key={candidate.id} className="flex items-center gap-3 py-3 first:pt-1" data-testid={`row-resume-${candidate.id}`}>
               <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-sm font-mono text-[11px] font-bold text-[#17343a] ${candidate.color}`}>
@@ -354,6 +398,8 @@ function ResumeQueue({
                   <span className="truncate">{candidate.fileName}</span>
                   <span>·</span>
                   <span>{candidate.size}</span>
+                  <span>·</span>
+                  <span className="text-[#5d8767]">ready</span>
                 </div>
               </div>
               <button onClick={() => onRemove(candidate.id)} className="rounded p-2 text-[#9aada5] transition hover:bg-[#f9e9e3] hover:text-[#b34f43]" aria-label={`Remove ${candidate.name}`} data-testid={`button-remove-resume-${candidate.id}`}>
@@ -365,7 +411,7 @@ function ResumeQueue({
       ) : (
         <div className="mt-5 flex items-center gap-2 text-xs text-[#829791]">
           <Info size={14} />
-          Your candidate list will appear here before screening.
+          No resumes loaded yet. After you choose files, they will appear in this list.
         </div>
       )}
     </section>
@@ -543,6 +589,7 @@ function Home() {
   const [isScreening, setIsScreening] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
+  const [isReadingFiles, setIsReadingFiles] = useState(false);
 
   const sortedResults = useMemo(() => [...results].sort((a, b) => b.score - a.score), [results]);
   const navigateToSection = (sectionId: string) => {
@@ -552,43 +599,68 @@ function Home() {
   const addFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     if (!files.length) return;
-    const supportedFiles = files.filter((file) => /\.(txt|md)$/i.test(file.name));
+    const supportedFiles = files.filter((file) => /\.(pdf|docx|txt|md)$/i.test(file.name));
     const rejectedCount = files.length - supportedFiles.length;
     if (!supportedFiles.length) {
-      setNotice('This local build reads plain text or Markdown files. Convert PDF or DOCX resumes to text before adding them.');
+      setNotice('No resumes were added. Choose PDF, DOCX, plain text, or Markdown files.');
+      navigateToSection('candidate-pool');
       event.target.value = '';
       return;
     }
-    const localText = await Promise.all(supportedFiles.map((file) => file.text().catch(() => '')));
+    setIsReadingFiles(true);
+    const parsedFiles: { file: File; text: string }[] = [];
+    const failedFiles: string[] = [];
+    for (const file of supportedFiles) {
+      try {
+        parsedFiles.push({ file, text: await readResumeFile(file) });
+      } catch {
+        failedFiles.push(file.name);
+      }
+    }
+    setIsReadingFiles(false);
+    if (!parsedFiles.length) {
+      setNotice(`We couldn't read the selected file${supportedFiles.length === 1 ? '' : 's'}. Try a text-based PDF or DOCX.`);
+      navigateToSection('candidate-pool');
+      event.target.value = '';
+      return;
+    }
     setQueue((current) => {
-      const additions = supportedFiles.map((file, index) => createCandidateFromFile(file, current.length + index, localText[index]));
+      const additions = parsedFiles.map(({ file, text }, index) => createCandidateFromFile(file, current.length + index, text));
       const existingNames = new Set(current.map((candidate) => candidate.fileName));
       return [...current, ...additions.filter((candidate) => !existingNames.has(candidate.fileName))];
     });
     setHasRun(false);
-    setNotice(`${supportedFiles.length} ${supportedFiles.length === 1 ? 'resume is' : 'resumes are'} ready to screen.${rejectedCount ? ` ${rejectedCount} unsupported file${rejectedCount === 1 ? '' : 's'} skipped.` : ''}`);
+    setSelectedId(null);
+    const duplicateCount = parsedFiles.length - new Set(parsedFiles.map(({ file }) => file.name)).size;
+    const skippedCount = rejectedCount + failedFiles.length;
+    setNotice(`${parsedFiles.length} ${parsedFiles.length === 1 ? 'resume is' : 'resumes are'} loaded and ready. ${skippedCount ? `${skippedCount} file${skippedCount === 1 ? '' : 's'} skipped.` : ''}${duplicateCount ? ' Duplicate names were ignored.' : ''}`);
+    navigateToSection('candidate-pool');
     event.target.value = '';
   };
 
   const runScreening = () => {
     if (!jobDescription.trim()) {
       setNotice('Add a job description first so the fit signal has something to compare against.');
+      navigateToSection('screening-desk');
       return;
     }
     if (!queue.length) {
-      setNotice('Add at least one resume to start a local screening pass.');
+      setNotice('No resumes are loaded yet. Choose at least one file in the Add resumes section first.');
+      navigateToSection('candidate-pool');
       return;
     }
-    setNotice('');
+    setNotice(`Screening ${queue.length} ${queue.length === 1 ? 'resume' : 'resumes'} locally…`);
     setIsScreening(true);
     setHasRun(true);
     setResults([]);
+    navigateToSection('review-notes');
     window.setTimeout(() => {
       const adjusted = queue.map((candidate) => screenCandidate(candidate, jobDescription));
       setResults(adjusted);
       setIsScreening(false);
       setSelectedId(adjusted[0]?.id ?? null);
       setNotice('Screening complete. Review the evidence behind each signal.');
+      navigateToSection('review-notes');
     }, 1300);
   };
 
@@ -672,17 +744,19 @@ function Home() {
                 </section>
 
                 <div className="mt-6">
-                  <ResumeQueue candidates={queue} onAdd={addFiles} onRemove={(id) => { setQueue((current) => current.filter((candidate) => candidate.id !== id)); setHasRun(false); setNotice('Resume removed from this screening desk.'); }} />
+                  <ResumeQueue candidates={queue} onAdd={addFiles} isReading={isReadingFiles} onRemove={(id) => { setQueue((current) => current.filter((candidate) => candidate.id !== id)); setHasRun(false); setNotice('Resume removed from this screening desk.'); }} />
                 </div>
 
                 <FairnessBoundary />
 
-                <button onClick={runScreening} disabled={isScreening} className="mt-6 flex w-full items-center justify-center gap-2 bg-[#17343a] px-5 py-3.5 text-sm font-semibold text-[#eff4e9] shadow-[4px_4px_0_#dce76b] transition hover:bg-[#294b4e] active:translate-x-[1px] active:translate-y-[1px] disabled:cursor-wait disabled:opacity-80" data-testid="button-run-screening">
+                <button onClick={runScreening} disabled={isScreening || isReadingFiles} className="mt-6 flex w-full items-center justify-center gap-2 bg-[#17343a] px-5 py-3.5 text-sm font-semibold text-[#eff4e9] shadow-[4px_4px_0_#dce76b] transition hover:bg-[#294b4e] active:translate-x-[1px] active:translate-y-[1px] disabled:cursor-wait disabled:opacity-80" data-testid="button-run-screening">
                   {isScreening ? <LoaderCircle size={16} className="animate-spin" /> : <ScanSearch size={16} />}
                   {isScreening ? 'Screening locally…' : 'Run local screening'}
                   {!isScreening && <ArrowUpRight size={16} className="ml-1" />}
                 </button>
-                <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-[0.08em] text-[#879b92]">No data leaves this browser · results are advisory</p>
+                <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-[0.08em] text-[#879b92]" data-testid="status-screening-explainer">
+                  {isReadingFiles ? 'Reading selected files in this browser…' : isScreening ? `Comparing ${queue.length} ${queue.length === 1 ? 'resume' : 'resumes'} with the role brief…` : queue.length ? `${queue.length} ${queue.length === 1 ? 'resume' : 'resumes'} loaded · no data leaves this browser` : 'Add resumes above to begin · no data leaves this browser'}
+                </p>
               </div>
 
               <div className="desk-in desk-in-delay-2 min-w-0">
